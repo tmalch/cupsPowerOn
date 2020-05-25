@@ -1,0 +1,166 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# cups backend to call a script for powering on before printing and powering off after some time
+# based on mailto backend by Robert Sander <robert.sander@epigenomics.com>
+# (C) 2020 Thomas Malcher
+# Released under MIT Licence
+# NO WARRANTY AT ALL
+#
+
+import os
+import stat
+import subprocess
+import sys
+import time
+
+
+class Settings:
+    required_uid = 0
+    required_gui = 0
+    seconds_till_poweroff = 5 * 60
+    wait_after_power_on = 10
+    backend_path = os.path.dirname(os.path.realpath(__file__))
+    name = "poweron"
+    script_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), name + "_scripts")
+
+    @classmethod
+    def setName(cls, name):
+        cls.name = name
+        cls.script_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), cls.name + "_scripts")
+
+
+def error(message):
+    sys.stderr.write("ERROR: " + Settings.name + " backend - " + message + "\n")
+
+
+def debug(message):
+    sys.stderr.write("DEBUG: " + Settings.name + " backend - " + message + "\n")
+
+
+def discovery():
+    print("network " + Settings.name + " \"Unknown\" \"poweron\"")
+    scripts = enumerate_executables(Settings.script_path)
+    printers = find_printers()
+    debug("existing printers:\n " + "\n ".join(" ".join(printer) for printer in printers))
+    for script in scripts:
+        debug("found script" + script)
+        for printer in printers:
+            print("network "+Settings.name+"://" + os.path.basename(script)+"/"+printer[1]+" "+ " ".join(printer[2:]))
+
+
+def find_printers():
+    printer_uri = []
+    for f in enumerate_executables(Settings.backend_path):
+        if Settings.name in f:
+            continue
+        res = subprocess.run(f, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
+        for line in res.stdout.splitlines():
+            args = line.split()
+            if len(args) >= 4 and "unknown" not in args[2].lower():
+                printer_uri.append(args)
+                print("network " + Settings.name + "://tasmota2.sh/" + args[1] + " " + " ".join(args[2:]))
+    return printer_uri
+
+
+def decode_deviceuri(deviceuri):
+    prefix = Settings.name + "://"
+    if type(deviceuri) == str and deviceuri.startswith(prefix):
+        nested_uri_idx = deviceuri.find("://", len(prefix))
+        if nested_uri_idx < 0:
+            return None, None
+        nested_uri_start = deviceuri.rfind("/", len(prefix), nested_uri_idx)
+        if nested_uri_start < 0:
+            error("wrong URI format, could not find switch uri " + deviceuri)
+            return deviceuri[len(prefix):], None
+        original_uri = deviceuri[nested_uri_start + 1:]
+        switchuri = deviceuri[:nested_uri_start]
+        switch_args = switchuri[len(prefix):].split("/")
+        return original_uri, switch_args
+    return deviceuri, None
+
+
+def enumerate_executables(folder):
+    if not os.path.isdir(folder):
+        error("Could not locate folder " + folder)
+        return []
+    attr = os.stat(folder)
+    if attr.st_uid == Settings.required_uid and attr.st_gid == Settings.required_gui and attr.st_mode & stat.S_IWOTH == 0:
+        files = [folder + "/" + f for f in os.listdir(folder) if os.path.isfile(folder + "/" + f)]
+        scripts = []
+        for file in files:
+            fattr = os.stat(file)
+            if fattr.st_uid == Settings.required_uid and fattr.st_gid == Settings.required_gui and fattr.st_mode & stat.S_IWOTH == 0 and fattr.st_mode & stat.S_IXUSR != 0:
+                scripts.append(file)
+        return scripts
+    return []
+
+
+def call_power_on(command):
+    script = os.path.join(Settings.script_path, command[0])
+    args = command[1:]
+    on_cmd = [script] + args + ["on"]
+
+    timed_off_cmd = ["systemd-run", "--no-block", "--on-active={}".format(Settings.seconds_till_poweroff)] + [script] + args + ["off"]
+
+    debug("going to execute on cmd: " + " ".join(on_cmd))
+    subprocess.run(on_cmd, check=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
+
+    debug("going to execute off cmd: " + " ".join(timed_off_cmd))
+    subprocess.run(timed_off_cmd, check=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
+
+
+def call_orig_backend(args, deviceuri):
+    # call the original backend
+    i = deviceuri.find("://")
+    if i != -1:
+        backend = Settings.backend_path + "/" + deviceuri[:i]
+        debug("execute backend %s" % " ".join([backend] + args))
+        env = {'DEVICE_URI': deviceuri}
+        os.execve(backend, [backend] + args, env)
+
+
+def main(args):
+    try:
+        if not os.path.exists(Settings.script_path):
+            error("scripts dir does not exist: " + Settings.script_path)
+            sys.exit(1)
+
+        argc = len(args)
+        debug(Settings.name + " argv[%s] = '%s'" % (argc, "', '".join(args)))
+        if argc == 1:  # Discovering
+            discovery()
+            sys.exit(0)
+
+        if argc < 6 or argc > 7:
+            error("wrong argument number: " + Settings.name + " job-id user title copies options [file]")
+            sys.exit(1)
+
+        deviceuri = os.environ['DEVICE_URI']
+        debug("Deviceuri: " + deviceuri)
+
+        orig_deviceuri, switch_command = decode_deviceuri(deviceuri)
+        debug("original deviceuri %s " % orig_deviceuri)
+        debug("switch args " + " ".join(switch_command or []))
+
+        if not orig_deviceuri:
+            error("wrong URI format, could not find nested original URI " + deviceuri)
+            sys.exit(1)
+
+        if switch_command is not None:
+            call_power_on(switch_command)
+            time.sleep(Settings.wait_after_power_on)  # wait some seconds until printer is ready
+
+        call_orig_backend(args[1:], orig_deviceuri)
+        sys.exit(0)
+    except subprocess.CalledProcessError as e:
+        error(str(type(e)) + "::" + str(e))
+        error("Output: " + e.stdout)
+        sys.exit(1)
+    except Exception as e:
+        error(str(type(e)) + "::" + str(e))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    Settings.setName(os.path.basename(sys.argv[0]))
+    main(sys.argv)

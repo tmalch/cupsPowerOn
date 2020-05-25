@@ -1,0 +1,11 @@
+#!/bin/sh
+
+if [ $# -ne 2 ]; then
+  exit 1
+fi
+
+if [ "$2" = "on" ]; then
+  sispmctl -o $1
+else
+  sispmctl -f $1
+fi

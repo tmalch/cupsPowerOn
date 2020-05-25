@@ -39,27 +39,6 @@ def debug(message):
 
 def discovery():
     print("network " + Settings.name + " \"Unknown\" \"poweron\"")
-    scripts = enumerate_executables(Settings.script_path)
-    printers = find_printers()
-    debug("existing printers:\n " + "\n ".join(" ".join(printer) for printer in printers))
-    for script in scripts:
-        debug("found script" + script)
-        for printer in printers:
-            print("network "+Settings.name+"://" + os.path.basename(script)+"/"+printer[1]+" "+ " ".join(printer[2:]))
-
-
-def find_printers():
-    printer_uri = []
-    for f in enumerate_executables(Settings.backend_path):
-        if Settings.name in f:
-            continue
-        res = subprocess.run(f, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
-        for line in res.stdout.splitlines():
-            args = line.split()
-            if len(args) >= 4 and "unknown" not in args[2].lower():
-                printer_uri.append(args)
-                print("network " + Settings.name + "://tasmota2.sh/" + args[1] + " " + " ".join(args[2:]))
-    return printer_uri
 
 
 def decode_deviceuri(deviceuri):
@@ -97,6 +76,9 @@ def enumerate_executables(folder):
 
 def call_power_on(command):
     script = os.path.join(Settings.script_path, command[0])
+    if script not in enumerate_executables(Settings.script_path):
+        error("Could not find script "+ script+ " with rights u+x o-w root:root in folder " + Settings.script_path+ " which has to have rights o-w root:root")
+        sys.exit(1)
     args = command[1:]
     on_cmd = [script] + args + ["on"]
 

@@ -17,7 +17,7 @@ import re
 
 class Settings:
     required_uid = 0
-    required_gui = 0
+    required_gid = 0
     seconds_till_poweroff = 5 * 60
     wait_after_power_on = 5
     backend_path = os.path.dirname(os.path.realpath(__file__))
@@ -55,6 +55,7 @@ def decode_deviceuri(deviceuri):
         original_uri = deviceuri[nested_uri_start + 1:]
         switchuri = deviceuri[:nested_uri_start]
         switch_args = switchuri[len(prefix):].split("/")
+        switch_args = [a for a in switch_args if len(a) > 0]
         return original_uri, switch_args
     return deviceuri, None
 
@@ -64,19 +65,19 @@ def enumerate_executables(folder):
         error("Could not locate folder " + folder)
         return []
     attr = os.stat(folder)
-    if attr.st_uid == Settings.required_uid and attr.st_gid == Settings.required_gui and attr.st_mode & stat.S_IWOTH == 0:
-        files = [folder + "/" + f for f in os.listdir(folder) if os.path.isfile(folder + "/" + f)]
+    if attr.st_uid == Settings.required_uid and attr.st_gid == Settings.required_gid and attr.st_mode & stat.S_IWOTH == 0:
+        files = [os.path.join(folder, f) for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         scripts = []
         for file in files:
             fattr = os.stat(file)
-            if fattr.st_uid == Settings.required_uid and fattr.st_gid == Settings.required_gui and fattr.st_mode & stat.S_IWOTH == 0 and fattr.st_mode & stat.S_IXUSR != 0:
-                scripts.append(file)
+            if fattr.st_uid == Settings.required_uid and fattr.st_gid == Settings.required_gid and fattr.st_mode & stat.S_IWOTH == 0 and fattr.st_mode & stat.S_IXUSR != 0:
+                scripts.append(os.path.realpath(file))
         return scripts
     return []
 
 
 def call_power_on(command):
-    script = os.path.join(Settings.script_path, command[0])
+    script = os.path.realpath(os.path.join(Settings.script_path, command[0]))
     if script not in enumerate_executables(Settings.script_path):
         error("Could not find script "+ script+ " with rights u+x o-w root:root in folder " + Settings.script_path+ " which has to have rights o-w root:root")
         sys.exit(1)

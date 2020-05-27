@@ -1,17 +1,23 @@
-# sispm cups backend
-a cups backend for using Gembird Programmable Power Outlet strips to automatically switch on a printer when cups receives a print job for it
+# poweron cups backend
+A cups backend to automatically power on a printer when a print job gets received for it.
+
 ### Requires
-sispmctl http://sispmctl.sourceforge.net/ >= 3.0 (for support of older version see branch sispmctl2.x) 
-GEMBIRD (m)SiS-PM Programmable Power Outlet Strip   
+python3, systemd
 
 tested on Ubuntu 18.04
 ### Installation
-copy file (sispm) into cups backend folder (/usr/lib/cups/backend) and restart cups
-sispmctl is expected at '/usr/bin/sispmctl'
+Copy file *poweron* and folder *poweron_scripts* into cups backend folder (_/usr/lib/cups/backend_) and restart cups
+
 ### Usage
-first get the URI for your printer eg. usb://Brother/HL-2030%20series  
-then add a new printer, select Network Printer SISPMCTL - *continue*  
-as Connection URI set sispm://outlet_number/original_URI   
-*outlet_number* is the number of the outlet at the Sis-PM strip to which the printer is connected    
-*original_URI* is the URI of the printer your retrieved in the first step  
-eg. sispmctl://3/usb://Brother/HL-2030%20series
+First get the URI for your printer eg. `usb://Brother/HL-2030%20series`  
+then add a new printer, select Network Printer poweron - continue  
+as Connection URI set `poweron://script/args/original_URI`
++ *script*: the name of the script file in *poweron_scripts/*
++ *args*: additional arguments for *script* 
++ *original_URI*: is the URI of the printer your retrieved in the first step  
+
+eg. `poweron://tasmota/192.168.0.11/usb://Brother/HL-2030%20series`
+
+When a print job gets send to the backend it calls *`script args on`* 
+eg. `poweron_scripts/tasmota 192.168.0.11 on` and starts a timer to power off with `poweron_scripts/tasmota 192.168.0.11 off` after 15 minuntes.
+If another job gets received within those 15 minutes the timer gets reset.

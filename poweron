@@ -12,13 +12,14 @@ import stat
 import subprocess
 import sys
 import time
+import re
 
 
 class Settings:
     required_uid = 0
     required_gui = 0
     seconds_till_poweroff = 5 * 60
-    wait_after_power_on = 10
+    wait_after_power_on = 5
     backend_path = os.path.dirname(os.path.realpath(__file__))
     name = "poweron"
     script_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), name + "_scripts")
@@ -49,8 +50,8 @@ def decode_deviceuri(deviceuri):
             return None, None
         nested_uri_start = deviceuri.rfind("/", len(prefix), nested_uri_idx)
         if nested_uri_start < 0:
-            error("wrong URI format, could not find switch uri " + deviceuri)
-            return deviceuri[len(prefix):], None
+            error("wrong URI format, could not find poweron uri " + deviceuri)
+            return deviceuri, None
         original_uri = deviceuri[nested_uri_start + 1:]
         switchuri = deviceuri[:nested_uri_start]
         switch_args = switchuri[len(prefix):].split("/")
@@ -81,30 +82,41 @@ def call_power_on(command):
         sys.exit(1)
     args = command[1:]
     on_cmd = [script] + args + ["on"]
-
-    timed_off_cmd = ["systemd-run", "--no-block", "--on-active={}".format(Settings.seconds_till_poweroff)] + [script] + args + ["off"]
-
     debug("going to execute on cmd: " + " ".join(on_cmd))
     subprocess.run(on_cmd, check=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
 
-    debug("going to execute off cmd: " + " ".join(timed_off_cmd))
-    subprocess.run(timed_off_cmd, check=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
+    timer_name = "poweron_"+"".join(command)
+    timer_name = re.sub(r'[^a-z0-9_.]', '', timer_name, flags=re.IGNORECASE)
+    issue_timed_command([script] + args + ["off"], timer_name)
+
+
+def issue_timed_command(command, timer_name):
+    timed_cmd = ["systemd-run", "--unit={}".format(timer_name), "--on-active={}".format(Settings.seconds_till_poweroff)] + command
+    res = subprocess.run(["systemctl", "is-active", "{}.timer".format(timer_name)], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    debug("{} is-active returned {}".format(timer_name, res.returncode))
+    if res.returncode == 0:
+        debug("timer {} already active -> restart it".format(timer_name))
+        subprocess.run(["systemctl", "restart",  "{}.timer".format(timer_name)], check=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
+    else:
+        debug("going to execute off cmd: " + " ".join(timed_cmd))
+        subprocess.run(timed_cmd, check=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, universal_newlines=True)
 
 
 def call_orig_backend(args, deviceuri):
-    # call the original backend
     i = deviceuri.find("://")
     if i != -1:
         backend = Settings.backend_path + "/" + deviceuri[:i]
-        debug("execute backend %s" % " ".join([backend] + args))
+        debug("execute backend: " + " ".join([backend] + args))
         env = {'DEVICE_URI': deviceuri}
         os.execve(backend, [backend] + args, env)
+    error("Could not locate backend/scheme in URI '{}' ".format(deviceuri))
+    sys.exit(1)
 
 
 def main(args):
     try:
         if not os.path.exists(Settings.script_path):
-            error("scripts dir does not exist: " + Settings.script_path)
+            error("scripts dir '{}' does not exist: ".format(Settings.script_path))
             sys.exit(1)
 
         argc = len(args)
@@ -121,17 +133,18 @@ def main(args):
         debug("Deviceuri: " + deviceuri)
 
         orig_deviceuri, switch_command = decode_deviceuri(deviceuri)
-        debug("original deviceuri %s " % orig_deviceuri)
-        debug("switch args " + " ".join(switch_command or []))
+        debug("nested deviceuri {} ".format(orig_deviceuri))
+        debug("script args " + " ".join(switch_command or []))
 
         if not orig_deviceuri:
-            error("wrong URI format, could not find nested original URI " + deviceuri)
+            error("wrong URI format, could not find nested original URI in '{}'".format(deviceuri))
             sys.exit(1)
 
         if switch_command is not None:
             call_power_on(switch_command)
             time.sleep(Settings.wait_after_power_on)  # wait some seconds until printer is ready
-
+        else:
+            error("wrong URI format, could not find poweron command in '{}'".format(deviceuri))
         call_orig_backend(args[1:], orig_deviceuri)
         sys.exit(0)
     except subprocess.CalledProcessError as e:

@@ -9,6 +9,7 @@ def setAutoOffRule(addr, event_name, delay_minutes):
 	rule = "ON Event#{event_name} DO Power ON ENDON ON Event#{event_name} DO RuleTimer1 {delay} ENDON ON Rules#Timer=1 DO Power1 off ENDON".format(event_name=event_name, delay=delay_minutes*60)
 	payload = urllib.parse.quote(rule)
 	urllib.request.urlopen("http://{}/cm?cmnd=Rule1%20{}".format(addr, payload))
+	urllib.request.urlopen("http://{}/cm?cmnd=Rule1%201".format(addr)) # enable rule just in case
 
 
 addr=sys.argv[1]

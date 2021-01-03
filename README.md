@@ -8,8 +8,13 @@ tested on Ubuntu 18.04
 ### Installation
 Copy file *poweron* and folder *poweron_scripts* into cups backend folder (_/usr/lib/cups/backend_).
 Ensure that *poweron* and *poweron_scripts* are owned by root and have the correct rights
+
 `chown -R root:root poweron_scripts/ poweron`
-`chmod -R o-w,u+x poweron_scripts/ poweron`
+
+`chmod -R 750 poweron` (if world has read or execute rights for this file it is run using an unprivileged user account, typically "lp".)
+
+`chmod -R o-w,u+x poweron_scripts/`
+
 restart cups to be sure
 
 ### Usage
